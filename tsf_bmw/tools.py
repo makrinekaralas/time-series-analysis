@@ -170,6 +170,8 @@ def moving_linreg(uvtsf_obj, hist='2D', step='1D'):
             ts_end = ts_start + datetime.timedelta ( days=int ( hist[0] ) )
         elif hist.upper ()[1] == 'W':
             ts_end = ts_start + datetime.timedelta ( weeks=int ( hist[0] ) )
+        elif hist.upper ()[1] == 'M':
+            ts_end = ts_start + relativedelta ( months=+int ( hist[0] ) )
             #
         if ts_end > max ( ts_df.index ):
             ts_end = max ( ts_df.index )
@@ -193,6 +195,9 @@ def moving_linreg(uvtsf_obj, hist='2D', step='1D'):
             ts_start = ts_start + datetime.timedelta ( days=int ( step[0] ) )
         elif step.upper ()[1] == 'W':
             ts_start = ts_start + datetime.timedelta ( weeks=int ( step[0] ) )
+        elif step.upper ()[1] == 'M':
+            ts_start = ts_start + relativedelta ( months=+int ( step[0] ) )
+            
         dt_id += 1
         # break
         if ts_start > max ( ts_df.index ):

@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import math
 import datetime
+from dateutil.relativedelta import relativedelta
 import argparse
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -29,9 +30,13 @@ import pmdarima as pm
 from pmdarima.arima.utils import ndiffs
 from statsmodels.graphics.gofplots import qqplot
 from copy import copy, deepcopy
+import holidays
+from scipy import stats
 from fbprophet import Prophet
 from fbprophet.plot import add_changepoints_to_plot
-import holidays
+from fbprophet.plot import plot_cross_validation_metric
+from fbprophet.diagnostics import cross_validation
+from fbprophet.diagnostics import performance_metrics
 from time import time, sleep
 
    
@@ -82,7 +87,7 @@ class UVariateTimeSeriesForecaster ( object ):
          ts_diagnose() - plots diagnostics plots
          plot_residuals() - residual plots
          ts_test()  - evaluates fitted model on test data, if this one has been generated
-         ts_forecats() - forecasts time series and plots the results
+         ts_forecast() - forecasts time series and plots the results
          plot_forecasts() - plots forecasted time-series
          ts_decompose() - time series decomposition in seasonal, trend and resduals
     """
@@ -99,7 +104,7 @@ class UVariateTimeSeriesForecaster ( object ):
                        p_train - a float value defining a part of data to be used for training (if wished so). the rest of the data will be understood as test data.
         """
         # constants and parameters
-        self._ts_dict_keys = ['ts_df', 'time_format', 'freq', 'p_train']
+        self._ts_dict_keys = ['ts_df', 'time_format', 'freq', 'transform', 'lmbda', 'alpha', 'p_train'] 
         self._ts_df_cols = ['ds', 'y']
         self._defparams_ses = imdict ( {
             'smoothing_level': None,
@@ -138,13 +143,16 @@ class UVariateTimeSeriesForecaster ( object ):
             'quarterly_seasonality': False,
             'weekly_seasonality': False, 
             'daily_seasonality': True,
-            'weekend_seasonality': True,     # customized!
+            'weekend_seasonality': False,     # customized!
             'country': 'AT',
             'state': None,
             'consider_holidays': True,
             'changepoint_prior_scale': 0.001, #make Trend 'not flexible' 
             'changepoint_range': 0.9,
-            'add_change_points': True
+            'add_change_points': True,
+            'diagnose': False,
+            'period': None,
+            'horizon': None
         } )
         self._defparams_linear = imdict ( {
             'fit_intercept': True, 
@@ -158,12 +166,13 @@ class UVariateTimeSeriesForecaster ( object ):
             assert isinstance(ts_dict, dict)  
         except AssertionError:
             print (
-                "A dictionary of form {'ts_df': ts_df, 'time_format': '%Y-%m-%d %H:%M:%S.%f', 'freq': freq, 'p_train': p_train} is expected for this variable!" )
+                "A dictionary of form {'ts_df': ts_df, 'time_format': '%Y-%m-%d %H:%M:%S.%f', 'freq': freq, 'transform': transformation,  'p_train': p_train} is expected for this variable!" )
             sys.exit ( "STOP" )
         # check for keys
-        len_keys = list ( filter ( lambda x: x in list ( ts_dict.keys () ), self._ts_dict_keys ) )
+        main_keys = [ z for z in self._ts_dict_keys if not z in ['lmbda','alpha'] ]
+        len_keys = list ( filter ( lambda x: x in list ( ts_dict.keys () ),   main_keys ) )
         try:
-            assert len ( len_keys ) == len ( self._ts_dict_keys )
+            assert len ( len_keys ) == len ( main_keys )
         except AssertionError:
             print ( "Not all keys in dictionary ts_dict could be located! Located only: {}".format ( len_keys ) )
             sys.exit ( "STOP" )
@@ -178,6 +187,14 @@ class UVariateTimeSeriesForecaster ( object ):
             self._freq = ts_dict['freq']
         # 2
         try:
+            assert ts_dict['transform'].lower() in ['log10', 'box-cox', '',' ']
+        except AssertionError:
+            print ( "transform should be in ['ln', 'box-cox'] or empty. Assuming no transform! Hence, if you get bad results, you would like maybe to choose e.g., log10 here.")
+            self._transform = None
+        else:
+            self.transform =  ts_dict['transform'].lower()
+        # 3
+        try:
             self._p_train = float ( ts_dict['p_train'] )
             assert self._p_train > 0
         except AssertionError:
@@ -187,7 +204,7 @@ class UVariateTimeSeriesForecaster ( object ):
         except ValueError:
             print ( "p_train must be convertable to float type!" )
             sys.exit ( "STOP" )
-        # 3
+        # 4
         try:
             assert pd.DataFrame ( ts_dict['ts_df'] ).shape[1] <= 2
         except AssertionError:
@@ -197,9 +214,39 @@ class UVariateTimeSeriesForecaster ( object ):
             self.ts_df = ts_dict['ts_df'].reset_index ()
             self.ts_df.columns = self._ts_df_cols
             self.ts_df['y'] = self.ts_df['y'].apply ( np.float64, errors='coerce' )
+            #transform
+            if self.transform == 'log10':
+                print("Applying log10 transform.")
+                try:
+                    self.ts_df['y'] = self.ts_df['y'].apply ( np.log10 )
+                except ValueError as e:
+                    print("log10 transformation did not work! Negative values present?... {}".format(e))
+                    sys.exit ( "STOP" )
+            elif self.transform == 'box-cox':
+                if 'lmbda' in list ( ts_dict.keys() ):
+                    self._boxcox_lmbda = ts_dict['lmbda']
+                else:
+                    self._boxcox_lmbda = None
+                if 'alpha' in list ( ts_dict.keys() ):
+                    self._boxcox_alpha = ts_dict['alpha']
+                else:
+                    self._boxcox_alpha = None
+                try:
+                    if self._boxcox_lmbda is None:
+                        bc, lmbda_1 = stats.boxcox(self.ts_df['y'],lmbda=self._boxcox_lmbda,alpha=self._boxcox_alpha) 
+                        self.ts_df['y'] =  stats.boxcox(self.ts_df['y'],lmbda=lmbda_1,alpha=self._boxcox_alpha) 
+                    else:
+                        self.ts_df['y'] =  stats.boxcox(self.ts_df['y'],lmbda=self._boxcox_lmbda,alpha=self._boxcox_alpha) 
+                        
+                except ValueError as e:
+                    print("box-cox transformation did not work! Negative values present or bad lmbda/alpha?... {}".format(e))
+                    sys.exit ( "STOP" )
+            elif self.transform.strip()=='':
+                print("No transformation.")
+                
             self.ts_df.set_index ( 'ds', inplace=True )
             print ( "Using time series data of range: " + str ( min ( self.ts_df.index ) ) + ' - ' + str ( max ( self.ts_df.index ) ) + " and shape: " + str (self.ts_df.shape ) )
-        # 4
+        # 5
         if not isinstance ( self.ts_df.index, pd.DatetimeIndex ):
             print ( "Time convertion is required..." )
             self.ts_df = self.ts_df.reset_index ()
@@ -370,7 +417,7 @@ class UVariateTimeSeriesForecaster ( object ):
             sys.exit( "STOP" )
         else:
             self.model['method'] = method.lower ()
-
+            
         # prep time series
         if self.ts_df.index.freq is None:
             print ( "Time series exhibit no frequency yet. Calling ts_resample()..." )
@@ -458,6 +505,14 @@ class UVariateTimeSeriesForecaster ( object ):
                 print("...via using parameters\n")
                 print(pd.DataFrame.from_dict(dict_params, orient='index'))
                 #
+                if self.model_params['diagnose']:
+                        try:
+                            assert not self.model_params['period'] is None and not self.model_params['horizon'] is None
+                        except (KeyError, AssertionError):
+                            print (
+                                "You want to diagnose the Prophet model. Please provide parameters 'period' and 'horizon' withinb object initialization!" )
+                            sys.exit ( "STOP " )
+                
                 ts_df = ts_df.reset_index ()
                 ts_df.columns = self._ts_df_cols
                 if not ts_test_df.empty:
@@ -478,16 +533,18 @@ class UVariateTimeSeriesForecaster ( object ):
                 else:
                         try:
                             assert not dict_params['country'] is None and len ( dict_params['country'] ) != 0 and dict_params['country'] in [
-                                'AT', 'DE']
+                                'AT', 'DE', 'US']
                         except AssertionError:
                             print (
-                                "You need to consider holidays? Then provide country name! Right now, Austria and Germany supported. Will use default value AT." )
+                                "You need to consider holidays? Then provide country name! Right now, Austria, Germany and US supported." )
                             sys.exit ( "STOP" )
                         else:
                             if dict_params['country'] == 'AT':
                                 holi = holidays.AT ( state=None, years=list ( np.unique ( np.asarray ( self.ts_df.index.year ) ) ) )
                             elif dict_params['country'] == 'DE':
                                 holi = holidays.DE ( state=None, years=list ( np.unique ( np.asarray ( self.ts_df.index.year ) ) ) )
+                            elif dict_params['country'] == 'US':
+                                holi = holidays.US ( state=None, years=list ( np.unique ( np.asarray ( self.ts_df.index.year ) ) ) )
                         #
                         holi_dict = dict()
                         for date, name in sorted ( holi.items () ):
@@ -526,9 +583,9 @@ class UVariateTimeSeriesForecaster ( object ):
                         self.model['test_dt'] = ts_test_df.copy()
                         self.model['test_dt'].set_index ( 'ds', inplace=True )
                     #
-                    self.model['m'].add_seasonality ( name='weekend_on_season', period=5,
+                    self.model['m'].add_seasonality ( name='weekend_on_season', period=7,
                                                       fourier_order=5, condition_name='on_weekend' )
-                    self.model['m'].add_seasonality ( name='weekend_off_season', period=2,
+                    self.model['m'].add_seasonality ( name='weekend_off_season', period=7,
                                                       fourier_order=5, condition_name='off_weekend' )
                     
                 #if input ( "Continue with fitting y/n?" ).strip().lower() != 'y':
@@ -684,7 +741,7 @@ class UVariateTimeSeriesForecaster ( object ):
         self.model['forecast'] = None
         self.model['residuals_forecast'] = None
 
-    def diagnose(self):
+    def ts_diagnose(self):
         """
         
         Model diagnostic plots
@@ -697,8 +754,56 @@ class UVariateTimeSeriesForecaster ( object ):
 
         if self.model['method'] == 'auto_arima':
             self.model['m_fit'].plot_diagnostics ( figsize=(9, 3.5) )
-
+        
         self.plot_residuals ()
+        
+        if self.model['method'] == 'prophet':
+            if self.model_params['diagnose']:
+                if input ( "Run cross validation y/n? Note, depending on parameters provided this can take some time..." ).strip().lower() == 'y':
+                    start = time()
+                    print("Running cross validation using parameters provided....")
+                    self.model['prophet_cv'] = cross_validation(self.model['m_fit'], period=self.model_params['period'], horizon = self.model_params['horizon'])
+                    print( "Time elapsed: {}".format ( time()-start ) )
+                    simu_intervals = self.model['prophet_cv'].groupby('cutoff')['ds'].agg (
+                        [('forecast_start', 'min'),
+                         ('forecast_till', 'max')] )
+                    print("Following time windows and cutoffs have been set-up:\n")
+                    print(simu_intervals)
+                    #
+                    plot_cross_validation_metric(self.model['prophet_cv'], metric='mape')
+                    #
+                    print("Running performance metrics...")
+                    self.model['prophet_p'] = performance_metrics(self.model['prophet_cv']) 
+                    #
+                    """
+                    perf_met = np.asarray(self.model['prophet_p']['horizon'].map ( str ). apply(lambda x: float(x.split(' ')[0])))
+                    fig, ax = plt.subplots()
+                    plt.plot(perf_met, self.model['prophet_p']['mape'])
+                    fig.canvas.draw()
+                    #change ticks
+                    labels = [item.get_text() for item in ax.get_xticklabels()]
+                    unit = ' days'
+                    if self._freq == 'S':
+                        unit = ' secs'
+                    elif self._freq == 'min':
+                        unit = ' mins'
+                    elif self._freq == 'H':
+                        unit = ' hours'
+                    elif self._freq == 'W':
+                        unit = ' weeks'
+                    elif self._freq == 'M':
+                        unit = ' months'
+                    ax.set_xticklabels(map(lambda x: x + unit, labels))
+                    
+                    plt.ylabel('MAPE')
+                    plt.title('MAPE over different forecasting periods.')
+                    plt.xticks(rotation=45)
+                    plt.show()
+                    """
+                    
+                else:     
+                    print("OK")
+                    return
 
     def plot_residuals(self):
         """
@@ -855,6 +960,10 @@ class UVariateTimeSeriesForecaster ( object ):
                 idx_future = pd.date_range ( start=max ( self.model['train_dt'].index ),
                                              end=max ( self.model['train_dt'].index ) + datetime.timedelta (
                                                  weeks=n_forecast - 1 ), freq='W' )
+            elif self._freq == 'M':
+                idx_future = pd.date_range ( start=max ( self.model['train_dt'].index ),
+                                             end=max ( self.model['train_dt'].index ) + relativedelta ( months=+(n_forecast - 1) ),
+                                             freq='M' )
             # fill in model
             self.model['forecast'] = pd.Series ( future, index=idx_future )
             if self.model['method'] == 'auto_arima':
@@ -946,7 +1055,7 @@ class UVariateTimeSeriesForecaster ( object ):
             plt.gcf ().autofmt_xdate ()
             plt.grid ( True )
             plt.show ()
-        elif self.model['method'] == 'prophet' and self.model['residuals_forecast'] is None:
+        if self.model['method'] == 'prophet': #and self.model['residuals_forecast'] is None:
             fig_forecast = self.model['m'].plot(self.model['forecast'])
             fig_components = self.model['m'].plot_components(self.model['forecast'])
             if self.model_params['add_change_points']:
@@ -1049,9 +1158,11 @@ def get_input_args():
 
     parser = argparse.ArgumentParser ()
     # 
-    parser.add_argument ( '--dt_path', type=str, default='ts.csv', help="complete path to your time series data" )
+    parser.add_argument ( '--dt_path', type=str, default='ts.csv', help="path to your time series data" )
+    parser.add_argument ( '--value_column', type=str, default='Value', help="Value column name" )
     parser.add_argument ( '--time_format', type=str, default='%Y-%m-%d %H:%M:%S', help="time format" )
     parser.add_argument ( '--freq', type=str, default='H', help="time series modelling frequency" )
+    parser.add_argument ( '--transform', type=str, default='', help="time series transformation" )
     parser.add_argument ( '--p_train', type=float, default=0.7, help="size of test data" )
     parser.add_argument ( '--method', type=str, default='auto_arima', help="method to use" )
     parser.add_argument ( '--n_forecast', type=int, default=5, help="number of periods to be forecasted" )
@@ -1068,25 +1179,42 @@ def main():
         print ( "Here only csv supported!" )
         sys.exit ( "STOP" )
     try:
-        ts = pd.read_csv ( args.dt_path, delimiter=';', index_col=0, decimal=',' )
+        #ts = pd.read_csv ( args.dt_path, delimiter=';', index_col=0, decimal=',' )
+        ts_df = pd.read_csv( args.dt_path, index_col='Date', delimiter=',', usecols=['Date',args.value_column], parse_dates=True)        
+        print("Data of shape "+str(ts_df.shape) + " read in.")
     except IOError:
         print ( "File could not be read!" )
         sys.exit ( "STOP" )
+    except:
+        print ( "Incompatible file format! Expected columns 'Date' and 'Value'" )
+        sys.exit ( "STOP" ) 
 
     # initiate
     uv_tsf = UVariateTimeSeriesForecaster (
-        dict ( {'ts': args.ts, 'time_format': args.time_format, 'freq': args.freq, 'p_train': args.p_train} ) )
+        dict ( {'ts_df': ts_df, 'time_format': args.time_format, 'freq': args.freq, 'transform': args.transform, 'p_train': args.p_train} ) )
     print_attributes ( uv_tsf )
     # resample
     uv_tsf.ts_resample ()
-    # fit
-    uv_tsf.ts_fit ( method=args.method )
-    # diagnose
-    uv_tsf.diagnose ()
-    # validate
-    uv_tsf.ts_test ()
-    # forecast
-    uv_tsf.ts_forecast ( n_forecast=args.n_forecast )
+    if input ( "Continue with ts_fit y/n?" ).strip().lower() == 'y':                   
+        # fit
+        uv_tsf.ts_fit ( method=args.method )
+    else:
+        sys.exit( "OK" )
+    if input ( "Continue with ts_diagnose y/n?" ).strip().lower() == 'y':                   
+        # diagnose
+        uv_tsf.ts_diagnose ()
+    else:
+        sys.exit( "OK" )
+    if input ( "Continue with ts_test y/n?" ).strip().lower() == 'y':                   
+        # test
+        uv_tsf.ts_test ()
+    else:
+        sys.exit( "OK" )
+    if input ( "Continue with ts_forecast y/n?" ).strip().lower() == 'y':                   
+        # forecast
+        uv_tsf.ts_forecast ( n_forecast=args.n_forecast )
+    else:
+        sys.exit( "OK" )
 
 
 if __name__ == '__main__':

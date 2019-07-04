@@ -1,4 +1,3 @@
-# uvar-time-series-analysis
 Univariate Time Series Analysis
 
 This package is intended to help you to perform univariate time-series forecasting/analysis. It assumes that you provide univariate time-series data.
@@ -39,10 +38,11 @@ tools.py offers you some algorithms and wil be subject to development. Right now
 
 Some good Internet resources:
 
-- [ExponentialSmoothing #1](http://www.statsmodels.org/dev/generated/statsmodels.tsa.holtwinters.ExponentialSmoothing.fit.html#statsmodels.tsa.holtwinters.ExponentialSmoothing.fit)
-- [ExponentialSmoothing #2](https://www.statsmodels.org/dev/examples/notebooks/generated/exponential_smoothing.html)
 - [ARIMA #1](https://www.machinelearningplus.com/time-series/arima-model-time-series-forecasting-python/)
 - [ARIMA #2](https://towardsdatascience.com/time-series-in-python-exponential-smoothing-and-arima-processes-2c67f2a52788)
+- [ExponentialSmoothing #1](http://www.statsmodels.org/dev/generated/statsmodels.tsa.holtwinters.ExponentialSmoothing.fit.html#statsmodels.tsa.holtwinters.ExponentialSmoothing.fit)
+- [ExponentialSmoothing #2](https://www.statsmodels.org/dev/examples/notebooks/generated/exponential_smoothing.html)
+- [ExponentialSmoothing #3](https://machinelearningmastery.com/exponential-smoothing-for-time-series-forecasting-in-python/)
 - [Prophet](https://facebook.github.io/prophet)
 
 Check also ./doc for further documentation.
