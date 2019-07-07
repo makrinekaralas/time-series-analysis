@@ -104,7 +104,7 @@ class UVariateTimeSeriesForecaster ( object ):
                        p_train - a float value defining a part of data to be used for training (if wished so). the rest of the data will be understood as test data.
         """
         # constants and parameters
-        self._ts_dict_keys = ['ts_df', 'time_format', 'freq', 'transform', 'lmbda', 'alpha', 'p_train'] 
+        self._ts_dict_keys = ['ts_df', 'time_format', 'freq', 'transform', 'lmbda', 'p_train'] 
         self._ts_df_cols = ['ds', 'y']
         self._defparams_ses = imdict ( {
             'smoothing_level': None,
@@ -169,7 +169,7 @@ class UVariateTimeSeriesForecaster ( object ):
                 "A dictionary of form {'ts_df': ts_df, 'time_format': '%Y-%m-%d %H:%M:%S.%f', 'freq': freq, 'transform': transformation,  'p_train': p_train} is expected for this variable!" )
             sys.exit ( "STOP" )
         # check for keys
-        main_keys = [ z for z in self._ts_dict_keys if not z in ['lmbda','alpha'] ]
+        main_keys = [ z for z in self._ts_dict_keys if not z in ['lmbda'] ]
         len_keys = list ( filter ( lambda x: x in list ( ts_dict.keys () ),   main_keys ) )
         try:
             assert len ( len_keys ) == len ( main_keys )
@@ -187,7 +187,7 @@ class UVariateTimeSeriesForecaster ( object ):
             self._freq = ts_dict['freq']
         # 2
         try:
-            assert ts_dict['transform'].lower() in ['log10', 'box-cox', '',' ']
+            assert ts_dict['transform'].lower().strip() in ['log10', 'box-cox', '']
         except AssertionError:
             print ( "transform should be in ['ln', 'box-cox'] or empty. Assuming no transform! Hence, if you get bad results, you would like maybe to choose e.g., log10 here.")
             self._transform = None
@@ -227,19 +227,15 @@ class UVariateTimeSeriesForecaster ( object ):
                     self._boxcox_lmbda = ts_dict['lmbda']
                 else:
                     self._boxcox_lmbda = None
-                if 'alpha' in list ( ts_dict.keys() ):
-                    self._boxcox_alpha = ts_dict['alpha']
-                else:
-                    self._boxcox_alpha = None
                 try:
                     if self._boxcox_lmbda is None:
-                        bc, lmbda_1 = stats.boxcox(self.ts_df['y'],lmbda=self._boxcox_lmbda,alpha=self._boxcox_alpha) 
-                        self.ts_df['y'] =  stats.boxcox(self.ts_df['y'],lmbda=lmbda_1,alpha=self._boxcox_alpha) 
+                        bc, lmbda_1 = stats.boxcox(self.ts_df['y'],lmbda=self._boxcox_lmbda) 
+                        self.ts_df['y'] =  stats.boxcox(self.ts_df['y'],lmbda=lmbda_1) 
                     else:
-                        self.ts_df['y'] =  stats.boxcox(self.ts_df['y'],lmbda=self._boxcox_lmbda,alpha=self._boxcox_alpha) 
+                        self.ts_df['y'] =  stats.boxcox(self.ts_df['y'],lmbda=self._boxcox_lmbda) 
                         
                 except ValueError as e:
-                    print("box-cox transformation did not work! Negative values present or bad lmbda/alpha?... {}".format(e))
+                    print("box-cox transformation did not work! Negative values present or bad lmbda?... {}".format(e))
                     sys.exit ( "STOP" )
             elif self.transform.strip()=='':
                 print("No transformation.")
@@ -393,8 +389,13 @@ class UVariateTimeSeriesForecaster ( object ):
             in case some parameters are not specified
             """
             if dict_params is None or len(dict_params) == 0:
-                def_values =  list ( def_params.keys () )
-                dict_params = dict()
+                if self.model_params is None or len(self.model_params) == 0:
+                    def_values =  list ( def_params.keys () )
+                    dict_params = dict()
+                else:
+                    def_values =  list ( filter (
+                        lambda x: x not in list ( self.model_params.keys () ), list ( def_params.keys () ) ) )
+                    dict_params = self.model_params
             else:
                 def_values = list ( filter (
                     lambda x: x not in list ( dict_params.keys () ), list ( def_params.keys () ) ) )
@@ -762,7 +763,23 @@ class UVariateTimeSeriesForecaster ( object ):
                 if input ( "Run cross validation y/n? Note, depending on parameters provided this can take some time..." ).strip().lower() == 'y':
                     start = time()
                     print("Running cross validation using parameters provided....")
-                    self.model['prophet_cv'] = cross_validation(self.model['m_fit'], period=self.model_params['period'], horizon = self.model_params['horizon'])
+                    if 'history' in list ( self.model_params.keys () ) and not self.model_params['history'] is None and self.model_params[
+                        'history'] != '':
+                        try:
+                            self.model['prophet_cv'] = cross_validation ( self.model['m_fit'], initial=self.model_params['history'],
+                                                                          period=self.model_params['period'],
+                                                                          horizon=self.model_params['horizon'] )
+                        except:
+                            print ( "Prophet cross validation error: check your parameters 'history', 'horizon', 'period'!" )
+                            sys.exit ( "STOP" )
+                    else:
+                        try:
+                            self.model['prophet_cv'] = cross_validation ( self.model['m_fit'], period=self.model_params['period'],
+                                                                          horizon=self.model_params['horizon'] )
+                        except:
+                            print ( "Prophet cross validation error: check your parameters 'horizon', 'period'!" )
+                            sys.exit ( "STOP" )
+                            
                     print( "Time elapsed: {}".format ( time()-start ) )
                     simu_intervals = self.model['prophet_cv'].groupby('cutoff')['ds'].agg (
                         [('forecast_start', 'min'),
@@ -1195,6 +1212,35 @@ def main():
     print_attributes ( uv_tsf )
     # resample
     uv_tsf.ts_resample ()
+    if args.method == 'prophet':
+        prophet_params = dict({"diagnose": True})
+        if input("Would you like to diagnose prophet (cross validation) y/n?").strip().lower() == 'y':
+            history = input("Enter history of format, e.g., '725 days' or '10000 hours'. Empty value would mean, 3X horizon will be considered: ".strip().lower())
+            if history == '':
+                prophet_params['history'] = None
+            else:
+                prophet_params['history'] = history
+            #
+            horizon = input("Enter horizon of format, e.g., '365 days' or '10 hours': ".strip().lower())
+            try:
+                assert not horizon == ''
+            except:
+                print("This value cannot be empty!")
+                sys,exit ( "STOP" )
+            else:
+                prophet_params['horizon'] = horizon
+            #    
+            period = input("Enter period of format, e.g., '180 days' or '5 hours': ".strip().lower())
+            try:
+                assert not period == ''
+            except:
+                print("This value cannot be empty!")
+                sys,exit ( "STOP" )
+            else:
+                prophet_params['period'] = horizon
+     
+        uv_tsf.set_model_params(prophet_params)
+        
     if input ( "Continue with ts_fit y/n?" ).strip().lower() == 'y':                   
         # fit
         uv_tsf.ts_fit ( method=args.method )

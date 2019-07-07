@@ -36,6 +36,12 @@ The package tsf containes the class UVariateTimeSeriesForecaster which you shoul
 
 tools.py offers you some algorithms and wil be subject to development. Right now, moving_linreg can be used. This algorithm performs moving linear regression and computes moving linear slopes over windows of data, the size of which can be casted via a parameter. position.ipynb under example_notebooks demonstrates the application of this algorithm.
 
+Recall, the Box-Cox transform is given by:
+
+y = (x**lmbda - 1) / lmbda,  for lmbda > 0
+    log(x),                  for lmbda = 0
+
+
 Some good Internet resources:
 
 - [ARIMA #1](https://www.machinelearningplus.com/time-series/arima-model-time-series-forecasting-python/)
@@ -45,4 +51,4 @@ Some good Internet resources:
 - [ExponentialSmoothing #3](https://machinelearningmastery.com/exponential-smoothing-for-time-series-forecasting-in-python/)
 - [Prophet](https://facebook.github.io/prophet)
 
-Check also ./doc for further documentation.
+

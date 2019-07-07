@@ -217,6 +217,9 @@ def moving_linreg(uvtsf_obj, hist='2D', step='1D'):
     for a, group in groups:
         sub_group = pd.DataFrame ( group[fittedvalues.columns] )
         axes[0].plot ( sub_group.index, sub_group.value, linewidth=1.3 )
+    axes[0].set_title("Moving linear fit")
+    axes[0].set_xlabel('Time')
+    axes[0].set_ylabel('Real and Fitted')
     #    
     slopes_agg = slopes.reset_index ().groupby ( by=['dt_id'] ).agg ( {
         'value': 'mean',
@@ -224,8 +227,10 @@ def moving_linreg(uvtsf_obj, hist='2D', step='1D'):
     } )
     slopes_agg.set_index ( 'index', inplace=True )
     axes[1].plot ( slopes_agg.index, slopes_agg.value, marker='o', linestyle='dashed', color = 'r', markersize=10 )
-    axes[1].set_title ( "Slopes" )
-
+    axes[1].set_title ( "Moving dlopes" )
+    axes[1].set_xlabel('Time')
+    axes[1].set_ylabel('Slopes')
+    
     plt.gcf ().autofmt_xdate ()
     plt.grid ( True )
     plt.show ()
