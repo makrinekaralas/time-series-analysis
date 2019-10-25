@@ -1,2 +1,0 @@
-pmdarima=1.2.0
-fbprophet==0.5
