@@ -112,9 +112,9 @@ class ExponentialSmoothingForecaster(UVariateTimeSeriesClass):
         self._use_boxcox = use_boxcox
         self._remove_bias = remove_bias
         self._use_brute = use_brute
-        
+
         self.assertions()
-        
+
         self._id = 'ExponentialSmoothing'
 
     def _init_trend(self):
@@ -158,7 +158,9 @@ class ExponentialSmoothingForecaster(UVariateTimeSeriesClass):
 
     def assertions(self):
         try:
-            assert self._es_trend is None or self._es_trend in ['add', 'mul', 'additive', 'multiplicative']
+            assert (self.hyper_params is not None and len(self.hyper_params) != 0 and 'trend' in list(
+                self.hyper_params.keys())) or (
+                           self._es_trend is None or self._es_trend in ['add', 'mul', 'additive', 'multiplicative'])
         except AssertionError:
             self._expsm_logger.exception("Assertion Error, trend must be in ['add','mul',"
                                          "'additive','multiplicative']")
@@ -232,51 +234,63 @@ class ExponentialSmoothingForecaster(UVariateTimeSeriesClass):
          suppress: bool
             Suppress or not some of the output messages
          """
-        self._prepare_fit()
-        self.ts_split()
-        self._init_trend()
-        self._init_seasonal()
-
-        ts_df = self._train_dt.copy()
-
-        # Fit
-        print("Trying to fit the exponential smoothing model....")
-        # tic
-        start = time()
-        try:
-            if not suppress:
-                self._expsm_logger.info("...via using parameters\n")
-                print_attributes(self)
+        if self.hyper_params is not None:
+            self._gs.set_forecaster(self)
+            self._gs.set_hyper_params(self.hyper_params)
+            # a very important command here to avoid endless loop
+            self.hyper_params = None
+            self._expsm_logger.info("***** Starting grid search *****")
+            self._gs = self._gs.grid_search(suppress=suppress, show_plot=False)
             #
-            self.model_fit = ExponentialSmoothing(ts_df,
-                                                  freq=self.freq,
-                                                  trend=self._es_trend,
-                                                  seasonal=self._es_seasonal,
-                                                  seasonal_periods=self._seasonal_periods,
-                                                  damped=self._damped).fit(smoothing_level=self._smoothing_level,
-                                                                           smoothing_slope=self._smoothing_slope,
-                                                                           smoothing_seasonal=self._smoothing_seasonal,
-                                                                           damping_slope=self._damping_slope,
-                                                                           optimized=self._optimized,
-                                                                           use_boxcox=self._use_boxcox,
-                                                                           remove_bias=self._remove_bias)
-        # toc
-            self._expsm_logger.info("Time elapsed: {} sec.".format(time() - start))
-        except (Exception, ValueError):
-            self._expsm_logger.exception("Exponential Smoothing error...")
+            self.best_model = self._gs.best_model
+            self.__dict__.update(self.best_model['forecaster'].__dict__)
+            self._expsm_logger.info("***** Finished grid search *****")
         else:
-            #
-            self._expsm_logger.info("Model successfully fitted to the data!")
+            self._prepare_fit()
+            self.ts_split()
+            self._init_trend()
+            self._init_seasonal()
 
-            # Fitted values
-            self._expsm_logger.info("Computing fitted values and residuals...")
-            self.fittedvalues = self.model_fit.fittedvalues
+            ts_df = self._train_dt.copy()
 
-            # Residuals
-            super(ExponentialSmoothingForecaster, self)._residuals()
-            self._expsm_logger.info("Done.")
+            # Fit
+            print("Trying to fit the exponential smoothing model....")
+            # tic
+            start = time()
+            try:
+                if not suppress:
+                    self._expsm_logger.info("...via using parameters\n")
+                    print_attributes(self)
+                #
+                self.model_fit = ExponentialSmoothing(ts_df,
+                                                      freq=self.freq,
+                                                      trend=self._es_trend,
+                                                      seasonal=self._es_seasonal,
+                                                      seasonal_periods=self._seasonal_periods,
+                                                      damped=self._damped).fit(smoothing_level=self._smoothing_level,
+                                                                               smoothing_slope=self._smoothing_slope,
+                                                                               smoothing_seasonal=self._smoothing_seasonal,
+                                                                               damping_slope=self._damping_slope,
+                                                                               optimized=self._optimized,
+                                                                               use_boxcox=self._use_boxcox,
+                                                                               remove_bias=self._remove_bias)
+                # toc
+                self._expsm_logger.info("Time elapsed: {} sec.".format(time() - start))
+            except (Exception, ValueError):
+                self._expsm_logger.exception("Exponential Smoothing error...")
+            else:
+                #
+                self._expsm_logger.info("Model successfully fitted to the data!")
 
-            return self
+                # Fitted values
+                self._expsm_logger.info("Computing fitted values and residuals...")
+                self.fittedvalues = self.model_fit.fittedvalues
+
+                # Residuals
+                super(ExponentialSmoothingForecaster, self)._residuals()
+                self._expsm_logger.info("Done.")
+
+        return self
 
     def ts_diagnose(self):
         """Diagnose the model"""
@@ -300,7 +314,7 @@ class ExponentialSmoothingForecaster(UVariateTimeSeriesClass):
 
     def ts_test(self, show_plot=True):
         """Test the fitted model if test data available"""
-        
+
         if super(ExponentialSmoothingForecaster, self)._check_ts_test() < 0:
             return
 

@@ -105,7 +105,9 @@ class ARIMAForecaster(UVariateTimeSeriesClass):
             self._arima_logger.exception("Assertion exception occurred, tuple expected")
             sys.exit("STOP")
         try:
-            assert self._arima_trend in ['c', 'nc'] or self._arima_trend is None
+            assert (self.hyper_params is not None and len(self.hyper_params) != 0 and
+                    'trend' in list(self.hyper_params.keys())) or (
+                        self._arima_trend in ['c', 'nc'] or self._arima_trend is None)
         except AssertionError:
             self._arima_logger.exception("Assertion Error, trend must be in ['c', 'nc']")
             sys.exit("STOP")
@@ -150,55 +152,68 @@ class ARIMAForecaster(UVariateTimeSeriesClass):
          suppress: bool
             Suppress or not some of the output messages
          """
-        self._prepare_fit()
-        self.ts_split()
-        ARIMAForecaster._init_trend(self)
 
-        ts_df = self._train_dt.copy()
-
-        # Fit
-        self._arima_logger.info("Trying to fit the ARIMA model....")
-        # tic
-        start = time()
-        try:
-            if not suppress:
-                self._arima_logger.info("...via using parameters\n")
-                print_attributes(self)
-
-            self._model = ARIMA(ts_df['y'], order=self._order, freq=self.freq)
-            self.model_fit = self._model.fit(trend=self._arima_trend, method='mle', disp=1)
-        except (Exception, ValueError):
-            self._arima_logger.exception("Exception occurred in the fit...")
-            self._arima_logger.error("Please try other parameters!")
-            self.model_fit = None
-
+        if self.hyper_params is not None:
+            self._gs.set_forecaster(self)
+            self._gs.set_hyper_params(self.hyper_params)
+            # a very important command here to avoid endless loop
+            self.hyper_params = None
+            self._arima_logger.info("***** Starting grid search *****")
+            self._gs = self._gs.grid_search(suppress=suppress, show_plot=False)
+            #
+            self.best_model = self._gs.best_model
+            self.__dict__.update(self.best_model['forecaster'].__dict__)
+            self._arima_logger.info("***** Finished grid search *****")
         else:
-            # toc
-            self._arima_logger.info("Time elapsed: {} sec.".format(time() - start))
-            self._arima_logger.info("Model successfully fitted to the data!")
-            if not suppress:
-                self._arima_logger.info("The model summary: " + str(self.model_fit.summary()))
+            self._prepare_fit()
+            self.ts_split()
+            ARIMAForecaster._init_trend(self)
 
-            # Fitted values
-            self._arima_logger.info("Computing fitted values and residuals...")
-            self._ar_coef, self._ma_coef = self.model_fit.arparams, self.model_fit.maparams
+            ts_df = self._train_dt.copy()
 
-            self.fittedvalues = self.model_fit.fittedvalues
-            # prologue
-            if len(self.fittedvalues) != len(self._train_dt):
-                self.fittedvalues = pd.DataFrame(
-                    index=pd.date_range(ts_df.index[0], ts_df.index[len(ts_df) - 1],
-                                        freq=self.freq),
-                    columns=['dummy']).join(pd.DataFrame(self.fittedvalues)).drop(['dummy'], axis=1)
-                self.fittedvalues = self.fittedvalues.reset_index()
-                self.fittedvalues.columns = self._ts_df_cols
-                self.fittedvalues.set_index('ds', inplace=True)
-                self.fittedvalues.y = self.fittedvalues.y.fillna(method='bfill')
+            # Fit
+            self._arima_logger.info("Trying to fit the ARIMA model....")
+            # tic
+            start = time()
+            try:
+                if not suppress:
+                    self._arima_logger.info("...via using parameters\n")
+                    print_attributes(self)
 
-            # Residuals
-            super(ARIMAForecaster, self)._residuals()
-            self._arima_logger.info("Done.")
-            return self
+                self._model = ARIMA(ts_df['y'], order=self._order, freq=self.freq)
+                self.model_fit = self._model.fit(trend=self._arima_trend, method='mle', disp=1)
+            except (Exception, ValueError):
+                self._arima_logger.exception("Exception occurred in the fit...")
+                self._arima_logger.error("Please try other parameters!")
+                self.model_fit = None
+
+            else:
+                # toc
+                self._arima_logger.info("Time elapsed: {} sec.".format(time() - start))
+                self._arima_logger.info("Model successfully fitted to the data!")
+                if not suppress:
+                    self._arima_logger.info("The model summary: " + str(self.model_fit.summary()))
+
+                # Fitted values
+                self._arima_logger.info("Computing fitted values and residuals...")
+                self._ar_coef, self._ma_coef = self.model_fit.arparams, self.model_fit.maparams
+
+                self.fittedvalues = self.model_fit.fittedvalues
+                # prologue
+                if len(self.fittedvalues) != len(self._train_dt):
+                    self.fittedvalues = pd.DataFrame(
+                        index=pd.date_range(ts_df.index[0], ts_df.index[len(ts_df) - 1],
+                                            freq=self.freq),
+                        columns=['dummy']).join(pd.DataFrame(self.fittedvalues)).drop(['dummy'], axis=1)
+                    self.fittedvalues = self.fittedvalues.reset_index()
+                    self.fittedvalues.columns = self._ts_df_cols
+                    self.fittedvalues.set_index('ds', inplace=True)
+                    self.fittedvalues.y = self.fittedvalues.y.fillna(method='bfill')
+
+                # Residuals
+                super(ARIMAForecaster, self)._residuals()
+                self._arima_logger.info("Done.")
+        return self
 
     def ts_diagnose(self):
         """Diagnoses the model.

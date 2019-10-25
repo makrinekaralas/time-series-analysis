@@ -105,7 +105,8 @@ class ARIMAForecaster(UVariateTimeSeriesClass):
             self._arima_logger.exception("Assertion exception occurred, tuple expected")
             sys.exit("STOP")
         try:
-            assert ('trend' in list(self.hyper_params.keys())) or (
+            assert (self.hyper_params is not None and len(self.hyper_params) != 0 and
+                    'trend' in list(self.hyper_params.keys())) or (
                         self._arima_trend in ['c', 'nc'] or self._arima_trend is None)
         except AssertionError:
             self._arima_logger.exception("Assertion Error, trend must be in ['c', 'nc']")

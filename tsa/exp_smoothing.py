@@ -112,9 +112,9 @@ class ExponentialSmoothingForecaster(UVariateTimeSeriesClass):
         self._use_boxcox = use_boxcox
         self._remove_bias = remove_bias
         self._use_brute = use_brute
-        
+
         self.assertions()
-        
+
         self._id = 'ExponentialSmoothing'
 
     def _init_trend(self):
@@ -158,8 +158,9 @@ class ExponentialSmoothingForecaster(UVariateTimeSeriesClass):
 
     def assertions(self):
         try:
-            assert ('trend' in list(self.hyper_params.keys())) or (
-                        self._es_trend is None or self._es_trend in ['add', 'mul', 'additive', 'multiplicative'])
+            assert (self.hyper_params is not None and len(self.hyper_params) != 0 and 'trend' in list(
+                self.hyper_params.keys())) or (
+                           self._es_trend is None or self._es_trend in ['add', 'mul', 'additive', 'multiplicative'])
         except AssertionError:
             self._expsm_logger.exception("Assertion Error, trend must be in ['add','mul',"
                                          "'additive','multiplicative']")
@@ -273,7 +274,7 @@ class ExponentialSmoothingForecaster(UVariateTimeSeriesClass):
                                                                                optimized=self._optimized,
                                                                                use_boxcox=self._use_boxcox,
                                                                                remove_bias=self._remove_bias)
-            # toc
+                # toc
                 self._expsm_logger.info("Time elapsed: {} sec.".format(time() - start))
             except (Exception, ValueError):
                 self._expsm_logger.exception("Exponential Smoothing error...")
@@ -313,7 +314,7 @@ class ExponentialSmoothingForecaster(UVariateTimeSeriesClass):
 
     def ts_test(self, show_plot=True):
         """Test the fitted model if test data available"""
-        
+
         if super(ExponentialSmoothingForecaster, self)._check_ts_test() < 0:
             return
 

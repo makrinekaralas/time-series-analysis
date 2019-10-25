@@ -100,7 +100,9 @@ class SARIMAForecaster(ARIMAForecaster):
             self._sarima_logger.exception("Assertion exception occurred, tuple expected")
             sys.exit("STOP")
         try:
-            assert self._sarima_trend is None or self._sarima_trend in ['n', 'c', 't', 'ct']
+            assert (self.hyper_params is not None and len(self.hyper_params) != 0 and
+                    'trend' in list(self.hyper_params.keys())) or (
+                        self._sarima_trend is None or self._sarima_trend in ['n', 'c', 't', 'ct'])
         except AssertionError:
             self._sarima_logger.exception("Assertion Error, trend must be in ['n', 'c', 't', 'ct']")
             sys.exit("STOP")
@@ -164,56 +166,68 @@ class SARIMAForecaster(ARIMAForecaster):
          suppress: bool
             Suppress or not some of the output messages
          """
-        self._prepare_fit()
-        self.ts_split()
-        self._init_trend()
-
-        ts_df = self._train_dt.copy()
-
-        # Fit
-        self._sarima_logger.info("Trying to fit the sarima model....")
-        # tic
-        start = time()
-        try:
-            if not suppress:
-                self._sarima_logger.info("...via using parameters\n")
-                print_attributes(self)
-
-            self._model = SARIMAX(ts_df['y'], order=self._order,
-                                  seasonal_order=self._s_order, trend=self._sarima_trend,
-                                  enforce_stationarity=False, enforce_invertibility=False,
-                                  freq=self.freq)
-            self.model_fit = self._model.fit(disp=1)
-        except (Exception, ValueError):
-            self._sarima_logger.exception("Exception occurred in the fit...")
-            self._sarima_logger.error("Please try other parameters!")
-            self.model_fit = None
-
+        if self.hyper_params is not None:
+            self._gs.set_forecaster(self)
+            self._gs.set_hyper_params(self.hyper_params)
+            # a very important command here to avoid endless loop
+            self.hyper_params = None
+            self._sarima_logger.info("***** Starting grid search *****")
+            self._gs = self._gs.grid_search(suppress=suppress, show_plot=False)
+            #
+            self.best_model = self._gs.best_model
+            self.__dict__.update(self.best_model['forecaster'].__dict__)
+            self._sarima_logger.info("***** Finished grid search *****")
         else:
-            # toc
-            self._sarima_logger.info("Time elapsed: {} sec.".format(time() - start))
-            self._sarima_logger.info("Model successfully fitted to the data!")
-            if not suppress:
-                self._sarima_logger.info("The model summary: " + str(self.model_fit.summary()))
+            self._prepare_fit()
+            self.ts_split()
+            self._init_trend()
 
-            # Fitted values
-            self._sarima_logger.info("Computing fitted values and residuals...")
-            self.fittedvalues = self.model_fit.fittedvalues
-            # prolong: for some reason this package returns fitted values this way
-            if len(self.fittedvalues) != len(self._train_dt):
-                self.fittedvalues = pd.DataFrame(
-                    index=pd.date_range(ts_df.index[0], ts_df.index[len(ts_df) - 1],
-                                        freq=self.freq),
-                    columns=['dummy']).join(pd.DataFrame(self.fittedvalues)).drop(['dummy'], axis=1)
-                self.fittedvalues = self.fittedvalues.reset_index()
-                self.fittedvalues.columns = self._ts_df_cols
-                self.fittedvalues.set_index('ds', inplace=True)
-                self.fittedvalues.y = self.fittedvalues.y.fillna(method='bfill')
+            ts_df = self._train_dt.copy()
 
-            #  Residuals
-            super(SARIMAForecaster, self)._residuals()
-            self._sarima_logger.info("Done.")
-            return self
+            # Fit
+            self._sarima_logger.info("Trying to fit the sarima model....")
+            # tic
+            start = time()
+            try:
+                if not suppress:
+                    self._sarima_logger.info("...via using parameters\n")
+                    print_attributes(self)
+
+                self._model = SARIMAX(ts_df['y'], order=self._order,
+                                      seasonal_order=self._s_order, trend=self._sarima_trend,
+                                      enforce_stationarity=False, enforce_invertibility=False,
+                                      freq=self.freq)
+                self.model_fit = self._model.fit(disp=1)
+            except (Exception, ValueError):
+                self._sarima_logger.exception("Exception occurred in the fit...")
+                self._sarima_logger.error("Please try other parameters!")
+                self.model_fit = None
+
+            else:
+                # toc
+                self._sarima_logger.info("Time elapsed: {} sec.".format(time() - start))
+                self._sarima_logger.info("Model successfully fitted to the data!")
+                if not suppress:
+                    self._sarima_logger.info("The model summary: " + str(self.model_fit.summary()))
+
+                # Fitted values
+                self._sarima_logger.info("Computing fitted values and residuals...")
+                self.fittedvalues = self.model_fit.fittedvalues
+                # prolong: for some reason this package returns fitted values this way
+                if len(self.fittedvalues) != len(self._train_dt):
+                    self.fittedvalues = pd.DataFrame(
+                        index=pd.date_range(ts_df.index[0], ts_df.index[len(ts_df) - 1],
+                                            freq=self.freq),
+                        columns=['dummy']).join(pd.DataFrame(self.fittedvalues)).drop(['dummy'], axis=1)
+                    self.fittedvalues = self.fittedvalues.reset_index()
+                    self.fittedvalues.columns = self._ts_df_cols
+                    self.fittedvalues.set_index('ds', inplace=True)
+                    self.fittedvalues.y = self.fittedvalues.y.fillna(method='bfill')
+
+                #  Residuals
+                super(SARIMAForecaster, self)._residuals()
+                self._sarima_logger.info("Done.")
+        return self
 
     def plot_residuals(self):
         """Plot the residuals"""
@@ -250,7 +264,7 @@ class SARIMAForecaster(ARIMAForecaster):
         # plot
         if show_plot:
             self.plot_forecast()
-        
+
         return self
 
     def ts_forecast(self, n_forecast, suppress=False):
@@ -265,14 +279,14 @@ class SARIMAForecaster(ARIMAForecaster):
         self._sarima_logger.info("Forecasting next " + str(n_forecast) + str(self.freq))
         #
         future = self.model_fit.predict(start=len(self._train_dt.index),
-                                        end=len(self._train_dt.index) + (n_forecast-1), dynamic=True)
+                                        end=len(self._train_dt.index) + (n_forecast - 1), dynamic=True)
         idx_future = self._gen_idx_future(n_forecast=n_forecast)
         self.forecast = pd.Series(future, index=idx_future)
-        #self.forecast = future
+        # self.forecast = future
 
         self.residuals_forecast = None
         self.plot_forecast()
-        
+
         return self
 
     def plot_forecast(self):

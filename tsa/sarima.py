@@ -100,7 +100,8 @@ class SARIMAForecaster(ARIMAForecaster):
             self._sarima_logger.exception("Assertion exception occurred, tuple expected")
             sys.exit("STOP")
         try:
-            assert ('trend' in list(self.hyper_params.keys())) or (
+            assert (self.hyper_params is not None and len(self.hyper_params) != 0 and
+                    'trend' in list(self.hyper_params.keys())) or (
                         self._sarima_trend is None or self._sarima_trend in ['n', 'c', 't', 'ct'])
         except AssertionError:
             self._sarima_logger.exception("Assertion Error, trend must be in ['n', 'c', 't', 'ct']")

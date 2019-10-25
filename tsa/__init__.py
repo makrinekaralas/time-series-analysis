@@ -12,6 +12,5 @@ from .linear import LinearForecaster
 from .exp_smoothing import ExponentialSmoothingForecaster
 from .uvtsf import UVariateTimeSeriesForecaster
 from .grid_search import GridSearchClass
-from .ensemble import EnsembleForecaster
 
 name = "time series analysis and forecasting package, bmw group"
